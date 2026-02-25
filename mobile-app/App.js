@@ -113,7 +113,11 @@ export default function App() {
       if (token) {
         setDeviceToken(token);
         await AsyncStorage.setItem('deviceToken', token);
+        await AsyncStorage.setItem('lastTokenRefresh', new Date().toISOString());
         console.log('✅ Device token obtained:', token);
+        
+        // Setup periodic token refresh (every hour)
+        setupTokenRefresh(token);
       } else {
         console.log('⚠️ No device token - using demo mode');
         // For demo purposes, use a fake token
@@ -127,6 +131,39 @@ export default function App() {
       const demoToken = 'demo-token-' + Date.now();
       setDeviceToken(demoToken);
     }
+  };
+
+  const setupTokenRefresh = (initialToken) => {
+    // Refresh token every 60 minutes
+    const refreshInterval = setInterval(async () => {
+      try {
+        const newToken = await registerForPushNotifications();
+        if (newToken && newToken !== initialToken) {
+          const deviceId = await AsyncStorage.getItem('deviceId') || deviceToken;
+          
+          // Notify backend of token refresh
+          await axios.post(`${API_URL}/api/fcm/refresh-token`, {
+            deviceId: deviceId,
+            oldToken: initialToken,
+            newToken: newToken
+          }, { timeout: 10000 }).catch(err => {
+            console.warn('Token refresh notification failed:', err.message);
+            // Silently fail - not critical
+          });
+          
+          setDeviceToken(newToken);
+          await AsyncStorage.setItem('deviceToken', newToken);
+          await AsyncStorage.setItem('lastTokenRefresh', new Date().toISOString());
+          console.log('✅ FCM token refreshed');
+        }
+      } catch (error) {
+        console.error('Token refresh error:', error);
+        // Silently fail - not critical
+      }
+    }, 60 * 60 * 1000); // 1 hour
+
+    // Cleanup interval on unmount (would need to be captured in ref)
+    return refreshInterval;
   };
 
   const loadSavedData = async () => {

@@ -785,6 +785,17 @@ if (global.gc) {
   }, 10 * 60 * 1000);
 }
 
+// ===== NEW MODULE ROUTES =====
+// Import new route modules
+const fcmRoutes = require('./src/routes/fcm');
+const queueRoutes = require('./src/routes/queue');
+const healthRoutes = require('./src/routes/health');
+
+// Use new routes
+app.use('/api/fcm', fcmRoutes);
+app.use('/api/queue', queueRoutes);
+app.use('/health/detailed', healthRoutes);
+
 // Memory stats logger
 setInterval(() => {
   const mem = process.memoryUsage();
