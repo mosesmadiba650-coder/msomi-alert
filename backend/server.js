@@ -621,9 +621,38 @@ app.get('/api/notifications/stats', async (req, res) => {
   }
 });
 
+// Keep-alive mechanism to prevent Render free tier from sleeping
+const KEEP_ALIVE_INTERVAL = 14 * 60 * 1000; // 14 minutes
+let keepAliveTimer = null;
+
+function startKeepAlive() {
+  if (process.env.NODE_ENV === 'production' && process.env.BACKEND_URL) {
+    keepAliveTimer = setInterval(async () => {
+      try {
+        const response = await require('axios').get(`${process.env.BACKEND_URL}/health`);
+        console.log('⏰ Keep-alive ping:', response.data.status);
+      } catch (error) {
+        console.error('❌ Keep-alive failed:', error.message);
+      }
+    }, KEEP_ALIVE_INTERVAL);
+    console.log('⏰ Keep-alive enabled (pings every 14 minutes)');
+  }
+}
+
 // Start server
 app.listen(PORT, () => {
   console.log('🚀 MSOMI ALERT backend running on port', PORT);
   console.log('🔥 Firebase Admin SDK initialized');
   console.log('📍 Test Firebase at: http://localhost:' + PORT + '/firebase-test');
+  console.log('🌐 Health check at: /health');
+  
+  // Start keep-alive after server is running
+  startKeepAlive();
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  if (keepAliveTimer) clearInterval(keepAliveTimer);
+  process.exit(0);
 });

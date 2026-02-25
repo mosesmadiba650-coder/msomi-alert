@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
+    "verify": "node verify-deployment.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -19,7 +20,7 @@
     "express": "^5.2.1",
     "firebase-admin": "^13.6.1",
     "node-cron": "^4.2.1",
-    "node-telegram-bot-api": "^0.67.0"
+    "node-telegram-bot-api": "^0.63.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
