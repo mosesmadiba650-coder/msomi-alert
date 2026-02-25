@@ -2,17 +2,26 @@
   "version": 2,
   "builds": [
     {
-      "src": "src/app.js",
+      "src": "server-new.js",
       "use": "@vercel/node"
     }
   ],
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "src/app.js"
+      "dest": "server-new.js"
     }
   ],
   "env": {
-    "NODE_ENV": "production"
-  }
+    "NODE_ENV": "production",
+    "NODE_VERSION": "18.x"
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache" }
+      ]
+    }
+  ]
 }

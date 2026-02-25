@@ -20,9 +20,9 @@ import OfflineIndicator from './OfflineIndicator';
 import documentService from './documentService';
 import { registerForPushNotifications } from './firebaseConfig';
 
-// Production backend URL - deployed to Render
+// Production backend URL - deployed to Vercel
 // For local testing, use: 'http://localhost:5000'
-const API_URL = 'https://msomi-alert-backend.onrender.com';
+const API_URL = 'https://msomi-alert.vercel.app';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
