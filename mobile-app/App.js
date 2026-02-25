@@ -19,9 +19,9 @@ import OfflineIndicator from './OfflineIndicator';
 import DemoMode from './DemoMode';
 import documentService from './documentService';
 
-// Change this to your computer's IP address when testing on real device
-// Find your IP: Open CMD and type "ipconfig", look for IPv4 Address
-const API_URL = 'http://localhost:5000';
+// Production backend URL (update after deploying to Render)
+// For local testing, use: 'http://localhost:5000'
+const API_URL = 'https://msomi-alert-backend.onrender.com';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
