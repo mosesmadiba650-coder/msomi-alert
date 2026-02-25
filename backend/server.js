@@ -13,6 +13,43 @@ admin.initializeApp({
 // Initialize Firestore database
 const db = admin.firestore();
 
+// ===== MEMORY OPTIMIZATION SETTINGS =====
+const CONCURRENT_REQUESTS = 100;
+const REQUEST_TIMEOUT = 30000; // 30 seconds
+const CACHE_TTL = 60000; // 1 minute cache
+
+// Simple in-memory cache for frequently accessed data
+const memoryCache = new Map();
+
+function cacheSet(key, value, ttl = CACHE_TTL) {
+  memoryCache.delete(key);
+  memoryCache.set(key, { value, expires: Date.now() + ttl });
+}
+
+function cacheGet(key) {
+  const cached = memoryCache.get(key);
+  if (!cached) return null;
+  if (Date.now() > cached.expires) {
+    memoryCache.delete(key);
+    return null;
+  }
+  return cached.value;
+}
+
+// Cleanup old cache entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of memoryCache.entries()) {
+    if (now > entry.expires) {
+      memoryCache.delete(key);
+    }
+  }
+}, 5 * 60 * 1000);
+
+// Request counter for monitoring concurrent load
+let activeRequests = 0;
+let peakRequests = 0;
+
 // Start Telegram Bot
 if (process.env.TELEGRAM_BOT_TOKEN) {
   require('./telegramBot');
@@ -25,7 +62,37 @@ const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '1mb' })); // Limit request size
+
+// Request tracking middleware
+app.use((req, res, next) => {
+  activeRequests++;
+  peakRequests = Math.max(peakRequests, activeRequests);
+  req.setTimeout(REQUEST_TIMEOUT);
+  res.on('finish', () => {
+    activeRequests--;
+  });
+  next();
+});
+
+// Memory status endpoint for monitoring
+app.get('/metrics', (req, res) => {
+  const memUsage = process.memoryUsage();
+  res.json({
+    memory: {
+      heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024) + 'MB',
+      heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024) + 'MB',
+      external: Math.round(memUsage.external / 1024 / 1024) + 'MB'
+    },
+    requests: {
+      active: activeRequests,
+      peak: peakRequests
+    },
+    cache: {
+      entries: memoryCache.size
+    }
+  });
+});
 
 // Test Firebase connection route
 app.get('/firebase-test', async (req, res) => {
@@ -132,28 +199,41 @@ app.post('/api/register-device', async (req, res) => {
   }
 });
 
-// Get all registered devices
+// Get all registered devices (with caching)
 app.get('/api/devices', async (req, res) => {
   try {
+    // Check cache first
+    const cached = cacheGet('api:devices');
+    if (cached) {
+      return res.json(cached);
+    }
+    
     const devicesSnapshot = await db.collection('devices')
       .orderBy('lastSeen', 'desc')
-      .limit(100)
+      .limit(50)
       .get();
     
     const devices = [];
     devicesSnapshot.forEach(doc => {
+      const data = doc.data();
       devices.push({
         id: doc.id,
-        ...doc.data(),
-        deviceToken: doc.data().deviceToken.substring(0, 10) + '...'
+        phoneNumber: data.phoneNumber,
+        courses: data.courses,
+        studentName: data.studentName,
+        active: data.active,
+        deviceToken: data.deviceToken.substring(0, 10) + '...'
       });
     });
     
-    res.json({ 
+    const response = { 
       success: true, 
       count: devices.length,
       devices 
-    });
+    };
+    
+    cacheSet('api:devices', response);
+    res.json(response);
   } catch (error) {
     res.status(500).json({ 
       success: false, 
@@ -338,24 +418,48 @@ app.get('/api/classrep/:telegramId/stats', async (req, res) => {
 
 // ===== NOTIFICATION SENDING ENDPOINTS =====
 
-// Helper function to remove invalid tokens
+// Helper function to remove invalid tokens (batched and delayed)
+const invalidTokenQueue = [];
+let tokenCleanupScheduled = false;
+
 async function removeInvalidToken(deviceToken) {
-  try {
-    const devicesSnapshot = await db.collection('devices')
-      .where('deviceToken', '==', deviceToken)
-      .get();
+  // Queue the cleanup instead of doing it immediately
+  invalidTokenQueue.push(deviceToken);
+  
+  // Process queue in batches every 5 seconds
+  if (!tokenCleanupScheduled && invalidTokenQueue.length > 0) {
+    tokenCleanupScheduled = true;
     
-    if (!devicesSnapshot.empty) {
-      const deviceDoc = devicesSnapshot.docs[0];
-      await deviceDoc.ref.update({
-        active: false,
-        invalidToken: true,
-        invalidatedAt: admin.firestore.FieldValue.serverTimestamp()
-      });
-      console.log(`Removed invalid token: ${deviceToken.substring(0, 15)}...`);
-    }
-  } catch (error) {
-    console.error('Error removing invalid token:', error);
+    setTimeout(async () => {
+      const batch = invalidTokenQueue.splice(0, 50); // Process max 50 at a time
+      
+      for (const token of batch) {
+        try {
+          const devicesSnapshot = await db.collection('devices')
+            .where('deviceToken', '==', token)
+            .limit(1)
+            .get();
+          
+          if (!devicesSnapshot.empty) {
+            const deviceDoc = devicesSnapshot.docs[0];
+            await deviceDoc.ref.update({
+              active: false,
+              invalidToken: true,
+              invalidatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+          }
+        } catch (error) {
+          console.error('Token cleanup error:', error.message);
+        }
+      }
+      
+      tokenCleanupScheduled = false;
+      
+      // Schedule next batch if queue not empty
+      if (invalidTokenQueue.length > 0) {
+        removeInvalidToken('').catch(() => {});
+      }
+    }, 5000);
   }
 }
 
@@ -423,10 +527,15 @@ app.post('/api/notify/course', async (req, res) => {
       }
     };
     
-    const sendResults = [];
+    let successTotal = 0;
+    let failureTotal = 0;
     const batchSize = 500;
+    const maxBatchLimit = deviceTokens.length;
     
-    for (let i = 0; i < deviceTokens.length; i += batchSize) {
+    console.log(`📤 Sending notification to ${deviceTokens.length} devices for ${courseCode}`);
+    
+    // Send notifications in batches
+    for (let i = 0; i < maxBatchLimit; i += batchSize) {
       const batch = deviceTokens.slice(i, i + batchSize);
       
       try {
@@ -435,55 +544,58 @@ app.post('/api/notify/course', async (req, res) => {
           ...payload
         });
         
-        sendResults.push({
-          batch: i / batchSize + 1,
-          successCount: response.successCount,
-          failureCount: response.failureCount,
-          responses: response.responses.map((r, idx) => ({
-            success: r.success,
-            error: r.error ? r.error.message : null,
-            token: batch[idx].substring(0, 15) + '...'
-          }))
-        });
+        successTotal += response.successCount;
+        failureTotal += response.failureCount;
         
+        // Clean up invalid tokens asynchronously (fire and forget)
         response.responses.forEach((resp, idx) => {
           if (!resp.success && resp.error && 
               (resp.error.code === 'messaging/invalid-registration-token' ||
                resp.error.code === 'messaging/registration-token-not-registered')) {
             const invalidToken = batch[idx];
-            removeInvalidToken(invalidToken);
+            removeInvalidToken(invalidToken).catch(err => {
+              console.error('Cleanup error:', err.message);
+            });
           }
         });
         
       } catch (batchError) {
         console.error('Batch send error:', batchError);
-        sendResults.push({
-          batch: i / batchSize + 1,
-          error: batchError.message
-        });
+        failureTotal += batch.length;
       }
     }
     
+    // Log notification asynchronously (don't await)
     const notificationLog = {
       courseCode,
       title,
       body,
       urgency,
       recipientCount: deviceTokens.length,
-      sendResults: sendResults,
       sentAt: admin.firestore.FieldValue.serverTimestamp(),
-      dataPayload: data || null
+      dataPayload: data || null,
+      summary: {
+        successCount: successTotal,
+        failureCount: failureTotal
+      }
     };
     
-    await db.collection('notifications').add(notificationLog);
+    db.collection('notifications').add(notificationLog).catch(err => {
+      console.error('Notification log error:', err);
+    });
+    
+    // Clear large arrays to help garbage collection
+    deviceTokens.length = 0;
     
     res.json({
       success: true,
-      message: `Notification sent to ${deviceTokens.length} devices`,
+      message: `Notification sent to ${successTotal} devices`,
       course: courseCode,
-      recipientCount: deviceTokens.length,
-      batches: sendResults.length,
-      details: sendResults
+      summary: {
+        total: successTotal + failureTotal,
+        success: successTotal,
+        failure: failureTotal
+      }
     });
     
   } catch (error) {
@@ -539,14 +651,23 @@ app.post('/api/notify/device', async (req, res) => {
   }
 });
 
-// Get notification history
+// Get notification history (with caching)
 app.get('/api/notifications', async (req, res) => {
   try {
-    const { limit = 50, course } = req.query;
+    let limit = Math.min(parseInt(req.query.limit) || 50, 100); // Cap at 100
+    const { course } = req.query;
+    const cacheKey = course ? `notifications:course:${course}:${limit}` : `notifications:recent:${limit}`;
+    
+    // Check cache first
+    const cached = cacheGet(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
     
     let query = db.collection('notifications')
+      .select('courseCode', 'title', 'body', 'urgency', 'recipientCount', 'sentAt', 'summary')
       .orderBy('sentAt', 'desc')
-      .limit(parseInt(limit));
+      .limit(limit);
     
     if (course) {
       query = query.where('courseCode', '==', course);
@@ -556,18 +677,27 @@ app.get('/api/notifications', async (req, res) => {
     
     const notifications = [];
     snapshot.forEach(doc => {
+      const data = doc.data();
       notifications.push({
         id: doc.id,
-        ...doc.data(),
-        sentAt: doc.data().sentAt?.toDate()
+        courseCode: data.courseCode,
+        title: data.title,
+        body: data.body,
+        urgency: data.urgency,
+        recipientCount: data.recipientCount,
+        sentAt: data.sentAt?.toDate(),
+        summary: data.summary
       });
     });
     
-    res.json({
+    const response = {
       success: true,
       count: notifications.length,
       notifications
-    });
+    };
+    
+    cacheSet(cacheKey, response);
+    res.json(response);
     
   } catch (error) {
     res.status(500).json({ 
@@ -629,7 +759,10 @@ function startKeepAlive() {
   if (process.env.NODE_ENV === 'production' && process.env.BACKEND_URL) {
     keepAliveTimer = setInterval(async () => {
       try {
-        const response = await require('axios').get(`${process.env.BACKEND_URL}/health`);
+        const response = await require('axios').get(
+          `${process.env.BACKEND_URL}/health`,
+          { timeout: 5000 }
+        );
         console.log('⏰ Keep-alive ping:', response.data.status);
       } catch (error) {
         console.error('❌ Keep-alive failed:', error.message);
@@ -639,20 +772,66 @@ function startKeepAlive() {
   }
 }
 
+// Force garbage collection every 10 minutes if available
+if (global.gc) {
+  setInterval(() => {
+    const before = process.memoryUsage().heapUsed;
+    global.gc();
+    const after = process.memoryUsage().heapUsed;
+    const released = Math.round((before - after) / 1024 / 1024);
+    if (released > 0) {
+      console.log(`♻️ GC: Released ${released}MB`);
+    }
+  }, 10 * 60 * 1000);
+}
+
+// Memory stats logger
+setInterval(() => {
+  const mem = process.memoryUsage();
+  const heapPercent = Math.round((mem.heapUsed / mem.heapTotal) * 100);
+  console.log(
+    `📊 Memory: ${Math.round(mem.heapUsed / 1024 / 1024)}MB/${Math.round(mem.heapTotal / 1024 / 1024)}MB (${heapPercent}%) | ` +
+    `Req: ${activeRequests}/${peakRequests} | Cache: ${memoryCache.size}`
+  );
+}, 60 * 1000);
+
 // Start server
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log('🚀 MSOMI ALERT backend running on port', PORT);
   console.log('🔥 Firebase Admin SDK initialized');
-  console.log('📍 Test Firebase at: http://localhost:' + PORT + '/firebase-test');
-  console.log('🌐 Health check at: /health');
+  console.log('📍 Health: /health | Firebase: /firebase-test');
+  console.log('📊 Metrics: /metrics | Notifications: /api/notifications');
+  console.log(`⚙️ Memory limits: ${REQUEST_TIMEOUT}ms timeout, ${CONCURRENT_REQUESTS} concurrent`);
   
-  // Start keep-alive after server is running
   startKeepAlive();
 });
 
-// Graceful shutdown
+// Set connection timeouts
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;
+server.requestTimeout = REQUEST_TIMEOUT;
+
+// Graceful shutdown handler
 process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
+  console.log('🛑 SIGTERM received - starting graceful shutdown...');
+  
   if (keepAliveTimer) clearInterval(keepAliveTimer);
-  process.exit(0);
+  
+  // Stop accepting new connections
+  server.close(() => {
+    console.log('✅ Server closed');
+    
+    // Clear memory
+    memoryCache.clear();
+    invalidTokenQueue.length = 0;
+    
+    console.log('✅ Cleanup complete');
+    process.exit(0);
+  });
+  
+  // Force shutdown after 30 seconds
+  setTimeout(() => {
+    console.error('❌ Forced shutdown after timeout');
+    process.exit(1);
+  }, 30000);
 });

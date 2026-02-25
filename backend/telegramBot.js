@@ -11,6 +11,29 @@ if (!BOT_TOKEN) {
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
+// ===== MEMORY OPTIMIZATION =====
+// Store message context with automatic cleanup
+const messageContext = new Map();
+const MESSAGE_CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
+const MESSAGE_TTL = 10 * 60 * 1000; // 10 minutes
+
+// Cleanup expired messages
+setInterval(() => {
+  const now = Date.now();
+  let cleaned = 0;
+  
+  for (const [userId, entry] of messageContext.entries()) {
+    if (now - entry.timestamp > MESSAGE_TTL) {
+      messageContext.delete(userId);
+      cleaned++;
+    }
+  }
+  
+  if (cleaned > 0) {
+    console.log(`🧹 Cleaned ${cleaned} expired messages (${messageContext.size} remaining)`);
+  }
+}, MESSAGE_CLEANUP_INTERVAL);
+
 function extractCourseCode(text) {
   const patterns = [
     /[A-Z]{2,4}\s?\d{3}[A-Z]?/g,
@@ -147,14 +170,14 @@ bot.on('message', async (msg) => {
     }
   });
   
-  if (!global.messageContext) global.messageContext = {};
-  global.messageContext[userId] = {
+  // Store with TTL
+  messageContext.set(userId, {
     courseCode,
     title,
     body: text,
     urgency,
     timestamp: Date.now()
-  };
+  });
 });
 
 bot.on('callback_query', async (callbackQuery) => {
@@ -168,6 +191,7 @@ bot.on('callback_query', async (callbackQuery) => {
       chat_id: chatId,
       message_id: msg.message_id
     });
+    messageContext.delete(userId);
     return;
   }
   
@@ -176,7 +200,7 @@ bot.on('callback_query', async (callbackQuery) => {
     const courseCode = parts[1];
     const urgency = parts[2];
     
-    const context = global.messageContext?.[userId];
+    const context = messageContext.get(userId);
     if (!context) {
       bot.sendMessage(chatId, '❌ Message expired. Please forward again.');
       return;
@@ -201,13 +225,15 @@ bot.on('callback_query', async (callbackQuery) => {
       });
       
       if (response.data.success) {
+        const summary = response.data.summary || {};
         bot.editMessageText(
           `✅ *Alert Sent Successfully!*\n\n` +
           `📊 *Stats:*\n` +
           `• Course: ${courseCode}\n` +
-          `• Students: ${response.data.recipientCount}\n` +
+          `• Sent: ${summary.success || response.data.recipientCount || 'N/A'}\n` +
+          `• Failed: ${summary.failure || 0}\n` +
           `• Urgency: ${urgency === 'urgent' ? '🔴 High' : '🟡 Normal'}\n\n` +
-          `Students with zero data balance will receive this immediately.`,
+          `✨ Even students with zero data balance received this.`,
           {
             chat_id: chatId,
             message_id: msg.message_id,
@@ -216,13 +242,15 @@ bot.on('callback_query', async (callbackQuery) => {
         );
       }
     } catch (error) {
+      console.error('Send error:', error.message);
       bot.editMessageText('❌ Failed to send alerts. Please try again.', {
         chat_id: chatId,
         message_id: msg.message_id
       });
     }
     
-    delete global.messageContext[userId];
+    // Cleanup
+    messageContext.delete(userId);
   }
 });
 
