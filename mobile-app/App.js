@@ -22,7 +22,7 @@ import { registerForPushNotifications } from './firebaseConfig';
 
 // Production backend URL - deployed to Render
 // For local testing, use: 'http://localhost:5000'
-const API_URL = 'https://msomi-alert.onrender.com';
+const API_URL = 'https://msomi-alert.vercel.app';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
