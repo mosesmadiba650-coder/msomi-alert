@@ -1,24 +1,46 @@
 {
   "cli": {
-    "version": ">= 3.0.0"
+    "version": ">= 5.0.0"
   },
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleDebug"
+      }
     },
     "preview": {
+      "distribution": "internal",
       "android": {
-        "buildType": "apk"
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleRelease"
+      },
+      "env": {
+        "API_URL": "https://msomi-alert.onrender.com",
+        "ENVIRONMENT": "preview"
       }
     },
     "production": {
+      "distribution": "store",
       "android": {
-        "buildType": "app-bundle"
+        "buildType": "app-bundle",
+        "gradleCommand": ":app:bundleRelease",
+        "releaseChannel": "production"
+      },
+      "env": {
+        "API_URL": "https://msomi-alert.onrender.com",
+        "ENVIRONMENT": "production"
       }
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "android": {
+        "serviceAccount": "./google-play-service-account.json",
+        "track": "internal"
+      }
+    }
   }
 }
