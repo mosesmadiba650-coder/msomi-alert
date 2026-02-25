@@ -35,8 +35,12 @@ Lecturer WhatsApp → Class Rep → Telegram Bot → Backend → Firebase → St
 - Node.js 18+ installed
 - Firebase project created
 - Telegram bot token from @BotFather
+- Android device for testing
 
-### Backend Setup
+### Backend Setup (Already Deployed)
+**Live URL**: https://msomi-alert.vercel.app
+
+For local development:
 ```bash
 cd backend
 npm install
@@ -49,16 +53,22 @@ npm run dev
 ```bash
 cd mobile-app
 npm install
+
+# For development testing (Expo Go)
 npx expo start
-# Scan QR code with Expo Go app
+
+# For production build (Real push notifications)
+eas login
+eas build -p android --profile preview
 ```
 
-## 📱 Demo Flow (3 Minutes)
-1. **Register** - Student adds courses (CSC201, BIT401)
-2. **Receive alert** - Class rep forwards WhatsApp message to Telegram bot
-3. **AI analysis** - Detects urgency, extracts "LT3" and "7am"
-4. **Zero-cost delivery** - Alert arrives on phone with NO DATA
-5. **Offline access** - Open downloaded lecture PDFs
+## 📱 Demo Flow (Production)
+1. **Install APK** - Download from EAS build link
+2. **Register** - Student adds courses (CSC201, BIT401)
+3. **Receive alert** - Class rep forwards WhatsApp message to Telegram bot
+4. **AI analysis** - Detects urgency, extracts "LT3" and "7am"
+5. **Zero-cost delivery** - Alert arrives on phone with NO DATA
+6. **Offline access** - Open downloaded lecture PDFs
 
 ## 🏆 Key Achievements
 - ✅ 99.97% delivery reliability without data bundles
@@ -104,20 +114,33 @@ TELEGRAM_BOT_TOKEN=your_bot_token_here
 BACKEND_URL=http://localhost:5000
 ```
 
-## 📦 Deployment
+## 📱 Production Deployment
 
-### Backend (Render)
-1. Push code to GitHub
-2. Connect to Render.com
-3. Deploy as Web Service
-4. Add environment variables
-
-### Mobile App (EAS Build)
+### Mobile App (Real Push Notifications)
 ```bash
-npm install -g eas-cli
+cd mobile-app
+
+# Login to Expo
 eas login
+
+# Build production APK
 eas build -p android --profile preview
+
+# Download and install APK on Android device
+# Enable "Install from Unknown Sources" if needed
 ```
+
+### Backend (Already Live)
+- **Production URL**: https://msomi-alert.vercel.app
+- **Status**: Deployed on Vercel
+- **Database**: Firebase Firestore
+- **Monitoring**: Vercel Dashboard
+
+### Testing Production App
+1. Install APK on Android device
+2. Register with your courses (CSC201, BIT401, etc.)
+3. Send test via Telegram: @msomi_alert_bot
+4. Receive notification (works even without data!)
 
 ## 🎤 Presentation Highlights
 - **Hook**: "43% of students miss updates because they can't afford data"

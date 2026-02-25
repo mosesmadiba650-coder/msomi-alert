@@ -3,6 +3,8 @@
     "name": "MSOMI ALERT",
     "slug": "msomi-alert",
     "version": "1.0.0",
+    "owner": "mosesmadiba650-coder",
+    "projectId": "msomi-alert-2026",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -65,16 +67,23 @@
     "plugins": [
       "expo-sqlite",
       "expo-web-browser",
-      "expo-notifications",
       "expo-file-system",
       "expo-document-picker",
-      "expo-sharing",
       [
         "expo-notifications",
         {
           "icon": "./assets/icon.png",
           "color": "#2c3e50",
-          "defaultChannel": "default"
+          "defaultChannel": "default",
+          "sounds": ["default"]
+        }
+      ],
+      [
+        "@react-native-firebase/app",
+        {
+          "android": {
+            "googleServicesFile": "./google-services.json"
+          }
         }
       ]
     ],

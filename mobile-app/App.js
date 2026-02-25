@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  SafeAreaView,
   StyleSheet,
   Text,
   View,
@@ -11,12 +10,13 @@ import {
   StatusBar,
   ScrollView
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import aiService from './aiService';
 import OfflineIndicator from './OfflineIndicator';
-import DemoMode from './DemoMode';
+
 import documentService from './documentService';
 import { registerForPushNotifications } from './firebaseConfig';
 
@@ -41,7 +41,7 @@ export default function App() {
   const [studentName, setStudentName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [loading, setLoading] = useState(false);
-  const [showDemo, setShowDemo] = useState(false);
+
   const [stats, setStats] = useState({
     totalAlerts: 0,
     unread: 0,
@@ -115,56 +115,24 @@ export default function App() {
         await AsyncStorage.setItem('deviceToken', token);
         await AsyncStorage.setItem('lastTokenRefresh', new Date().toISOString());
         console.log('✅ Device token obtained:', token);
-        
-        // Setup periodic token refresh (every hour)
-        setupTokenRefresh(token);
       } else {
-        console.log('⚠️ No device token - using demo mode');
-        // For demo purposes, use a fake token
-        const demoToken = 'demo-token-' + Date.now();
-        setDeviceToken(demoToken);
-        await AsyncStorage.setItem('deviceToken', demoToken);
+        Alert.alert(
+          'Push Notifications Required',
+          'Please enable notifications to receive alerts. Go to Settings > Notifications and enable for MSOMI ALERT.',
+          [{ text: 'OK' }]
+        );
       }
     } catch (error) {
-      console.error('Setup error:', error);
-      // Fallback to demo token
-      const demoToken = 'demo-token-' + Date.now();
-      setDeviceToken(demoToken);
+      console.error('Error getting push token:', error);
+      Alert.alert(
+        'Notification Setup Failed',
+        'Unable to setup push notifications. Please check your device settings.',
+        [{ text: 'OK' }]
+      );
     }
   };
 
-  const setupTokenRefresh = (initialToken) => {
-    // Refresh token every 60 minutes
-    const refreshInterval = setInterval(async () => {
-      try {
-        const newToken = await registerForPushNotifications();
-        if (newToken && newToken !== initialToken) {
-          const deviceId = await AsyncStorage.getItem('deviceId') || deviceToken;
-          
-          // Notify backend of token refresh
-          await axios.post(`${API_URL}/api/fcm/refresh-token`, {
-            deviceId: deviceId,
-            oldToken: initialToken,
-            newToken: newToken
-          }, { timeout: 10000 }).catch(err => {
-            console.warn('Token refresh notification failed:', err.message);
-            // Silently fail - not critical
-          });
-          
-          setDeviceToken(newToken);
-          await AsyncStorage.setItem('deviceToken', newToken);
-          await AsyncStorage.setItem('lastTokenRefresh', new Date().toISOString());
-          console.log('✅ FCM token refreshed');
-        }
-      } catch (error) {
-        console.error('Token refresh error:', error);
-        // Silently fail - not critical
-      }
-    }, 60 * 60 * 1000); // 1 hour
 
-    // Cleanup interval on unmount (would need to be captured in ref)
-    return refreshInterval;
-  };
 
   const loadSavedData = async () => {
     try {
@@ -336,15 +304,7 @@ export default function App() {
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={styles.skipButton}
-              onPress={() => {
-                setRegistered(true);
-                Alert.alert('Demo Mode', 'Using app in demo mode. You can still receive notifications!');
-              }}
-            >
-              <Text style={styles.skipButtonText}>Skip Registration (Demo Mode)</Text>
-            </TouchableOpacity>
+
 
             <Text style={styles.note}>
               Note: You'll receive alerts even with zero data balance
@@ -367,12 +327,6 @@ export default function App() {
           </Text>
         </View>
         <View style={styles.headerButtons}>
-          <TouchableOpacity 
-            style={styles.refreshButton}
-            onPress={() => setShowDemo(true)}
-          >
-            <Text style={styles.refreshButtonText}>🎯</Text>
-          </TouchableOpacity>
           <TouchableOpacity 
             style={styles.refreshButton}
             onPress={() => setRegistered(false)}
@@ -408,14 +362,11 @@ export default function App() {
           <Text style={styles.emptyIcon}>📭</Text>
           <Text style={styles.emptyText}>No alerts yet</Text>
           <Text style={styles.emptySubtext}>
-            Send a test from Telegram bot or demo mode
+            Waiting for notifications from your courses
           </Text>
-          <TouchableOpacity 
-            style={styles.demoLaunchButton}
-            onPress={() => setShowDemo(true)}
-          >
-            <Text style={styles.demoLaunchText}>🚀 Launch Demo</Text>
-          </TouchableOpacity>
+          <Text style={styles.emptyHint}>
+            Class reps will send updates via Telegram bot
+          </Text>
         </View>
       ) : (
         <FlatList
@@ -455,7 +406,6 @@ export default function App() {
       )}
 
       <OfflineIndicator />
-      <DemoMode visible={showDemo} onClose={() => setShowDemo(false)} />
     </SafeAreaView>
   );
 }
@@ -577,20 +527,7 @@ const styles = StyleSheet.create({
     marginTop: 15,
     fontSize: 12,
   },
-  skipButton: {
-    backgroundColor: 'transparent',
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: '#3498db',
-  },
-  skipButtonText: {
-    color: '#3498db',
-    fontSize: 14,
-    fontWeight: '600',
-  },
+
   notificationHeader: {
     backgroundColor: '#27ae60',
     padding: 20,
@@ -716,16 +653,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 20,
   },
-  demoLaunchButton: {
-    backgroundColor: '#27ae60',
-    paddingHorizontal: 25,
-    paddingVertical: 12,
-    borderRadius: 25,
-  },
-  demoLaunchText: {
-    color: 'white',
-    fontWeight: 'bold',
-    fontSize: 16,
+  emptyHint: {
+    fontSize: 12,
+    color: '#bdc3c7',
+    textAlign: 'center',
+    marginTop: 10,
   },
   aiTags: {
     flexDirection: 'row',
