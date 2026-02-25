@@ -1,0 +1,16 @@
+# render.yaml - Render deployment configuration
+services:
+  - type: web
+    name: msomi-alert-backend
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 18.x
+      - key: PORT
+        value: 5000
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: BACKEND_URL
+        sync: false
