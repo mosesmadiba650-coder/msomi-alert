@@ -18,10 +18,11 @@ import aiService from './aiService';
 import OfflineIndicator from './OfflineIndicator';
 import DemoMode from './DemoMode';
 import documentService from './documentService';
+import { registerForPushNotifications } from './firebaseConfig';
 
-// Production backend URL (update after deploying to Render)
+// Production backend URL - deployed to Render
 // For local testing, use: 'http://localhost:5000'
-const API_URL = 'https://msomi-alert-backend.onrender.com';
+const API_URL = 'https://msomi-alert.onrender.com';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -54,7 +55,6 @@ export default function App() {
     setupNotifications();
     loadSavedData();
     initializeAI();
-    documentService.initialize();
     
     notificationListener.current = Notifications.addNotificationReceivedListener(async (notification) => {
       const messageText = notification.request.content.body || '';
@@ -109,24 +109,23 @@ export default function App() {
 
   const setupNotifications = async () => {
     try {
-      const { status: existingStatus } = await Notifications.getPermissionsAsync();
-      let finalStatus = existingStatus;
-      
-      if (existingStatus !== 'granted') {
-        const { status } = await Notifications.requestPermissionsAsync();
-        finalStatus = status;
+      const token = await registerForPushNotifications();
+      if (token) {
+        setDeviceToken(token);
+        await AsyncStorage.setItem('deviceToken', token);
+        console.log('✅ Device token obtained:', token);
+      } else {
+        console.log('⚠️ No device token - using demo mode');
+        // For demo purposes, use a fake token
+        const demoToken = 'demo-token-' + Date.now();
+        setDeviceToken(demoToken);
+        await AsyncStorage.setItem('deviceToken', demoToken);
       }
-      
-      if (finalStatus !== 'granted') {
-        Alert.alert('Error', 'Failed to get notification permissions');
-        return;
-      }
-      
-      const token = (await Notifications.getExpoPushTokenAsync()).data;
-      setDeviceToken(token);
-      await AsyncStorage.setItem('deviceToken', token);
     } catch (error) {
       console.error('Setup error:', error);
+      // Fallback to demo token
+      const demoToken = 'demo-token-' + Date.now();
+      setDeviceToken(demoToken);
     }
   };
 
@@ -160,11 +159,16 @@ export default function App() {
     setLoading(true);
 
     try {
+      console.log('Registering to:', API_URL);
+      console.log('Token:', deviceToken);
+      
       const response = await axios.post(`${API_URL}/api/register-device`, {
         deviceToken: deviceToken,
         phoneNumber: phoneNumber,
         studentName: studentName,
         courses: courses
+      }, {
+        timeout: 30000 // 30 second timeout
       });
 
       if (response.data.success) {
@@ -178,7 +182,19 @@ export default function App() {
       }
     } catch (error) {
       console.error('Registration error:', error);
-      Alert.alert('Error', 'Failed to register. Make sure backend is running.');
+      let errorMsg = 'Failed to register. ';
+      
+      if (error.code === 'ECONNABORTED') {
+        errorMsg += 'Request timeout. Backend may be sleeping (Render free tier). Try again in 1 minute.';
+      } else if (error.message.includes('Network')) {
+        errorMsg += 'Network error. Check your internet connection.';
+      } else if (error.response) {
+        errorMsg += `Server error: ${error.response.status}`;
+      } else {
+        errorMsg += error.message;
+      }
+      
+      Alert.alert('Error', errorMsg);
     } finally {
       setLoading(false);
     }
@@ -281,6 +297,16 @@ export default function App() {
               <Text style={styles.registerButtonText}>
                 {loading ? 'Registering...' : '✅ Register Device'}
               </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.skipButton}
+              onPress={() => {
+                setRegistered(true);
+                Alert.alert('Demo Mode', 'Using app in demo mode. You can still receive notifications!');
+              }}
+            >
+              <Text style={styles.skipButtonText}>Skip Registration (Demo Mode)</Text>
             </TouchableOpacity>
 
             <Text style={styles.note}>
@@ -513,6 +539,20 @@ const styles = StyleSheet.create({
     color: '#7f8c8d',
     marginTop: 15,
     fontSize: 12,
+  },
+  skipButton: {
+    backgroundColor: 'transparent',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#3498db',
+  },
+  skipButtonText: {
+    color: '#3498db',
+    fontSize: 14,
+    fontWeight: '600',
   },
   notificationHeader: {
     backgroundColor: '#27ae60',
